@@ -4,5 +4,14 @@ class LocateException(Exception):
 class VideoUnreadableException(Exception):
     pass
 
-class ConcatExcption(Exception):
+class ConcatException(Exception):
+    pass
+
+class FPSException(Exception):
+    pass
+
+class FrameSizeException(Exception):
+    pass
+
+class UserAbortException(Exception):
     pass

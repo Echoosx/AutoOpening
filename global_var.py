@@ -4,6 +4,10 @@ import traceback
 def _init():  # 初始化
     global _global_dict
     _global_dict = {}
+    #     'SOURCE_PATH':'source/',
+    #     'TMP_PATH':'tmp/',
+    #     'LOG_PATH':'log/'
+    # }
 
 def set_value(key, value):
     #定义一个全局变量

@@ -1,8 +1,9 @@
-from PyQt6.QtWidgets import QApplication, QWidget, QPushButton,QMainWindow,QFileDialog,QLineEdit,QInputDialog,QLabel,QComboBox,QHBoxLayout,QVBoxLayout,QDoubleSpinBox,QSpinBox,QCheckBox,QTextEdit
+from PyQt6.QtWidgets import QApplication, QWidget, QPushButton,QMainWindow,QFileDialog,QLineEdit,QInputDialog,QLabel,QComboBox,QHBoxLayout,QVBoxLayout,QDoubleSpinBox,QSpinBox,QCheckBox,QTextEdit,QProgressBar,QMessageBox
 from PyQt6.QtGui import QAction,QIcon
 from PyQt6.QtCore import Qt,QSize
 from my_exception import *
 from main import auto_op_replace
+from logger import stdout_box
 import global_var
 import sys
 import os
@@ -10,61 +11,21 @@ import cv2
 import configparser
 import logger
 import traceback
+import time
 
 
 # 全局变量
 global_var._init()
-global_var.set_value('skip_flag',False)
+global_var.set_value('abort_flag',False)
+global_var.set_value('running_flag',False)
 
 config = configparser.ConfigParser()
 config_path = os.path.join(os.path.dirname(__file__),'config.ini')
 config.read(config_path,encoding='utf-8')
 
-class ErrorWindow(QWidget):
-    def __init__(self,title = '错误信息'):
-        super().__init__()
-        self.setWindowTitle(title)
-        self.initUI()
-    
-    def initUI(self):
-        self.resize(QSize(800,900))
-        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
-        self.setWindowIcon(QIcon('windowIcon.ico'))
-        
-        # 错误报告
-        self.log = logger.read_log()
-        error_text_box = QTextEdit()
-        error_text_box.setText(self.log)
-        error_text_box.setReadOnly(True)
-
-        # 复制按钮
-        copy_btn = QPushButton('复制',self)
-        copy_btn.clicked.connect(self.copy_log)
-
-        # 关闭按钮
-        close_btn = QPushButton('关闭',self)
-        close_btn.clicked.connect(self.close)
-
-        # msg
-        self.msg = QLabel()
-
-        # 布局
-        grid = QVBoxLayout()
-        grid.addWidget(error_text_box)
-
-        row_2 = QHBoxLayout()
-        row_2.addWidget(self.msg)
-        row_2.addStretch(1)
-        row_2.addWidget(copy_btn)
-        row_2.addWidget(close_btn)
-        grid.addLayout(row_2)
-
-        self.setLayout(grid)
-    
-    def copy_log(self):
-        clipborad = QApplication.clipboard()
-        clipborad.setText(self.log)
-        self.msg.setText('已复制到剪贴板')
+message_label = QLabel()
+progress_bar = QProgressBar()
+abort_btn = QPushButton('放弃')
 
 class MLineEdit(QLineEdit):
     def __init__(self, title, main, video):
@@ -86,6 +47,98 @@ class MLineEdit(QLineEdit):
         self.setText(filePath)
         if(self.video):
             self.main.set_root(filePath)
+
+
+class RunWindow(QWidget):
+    def __init__(self,title):
+        super().__init__()
+        self.setWindowTitle(title)
+        self.initUI()
+    
+    def initUI(self):
+        self.resize(QSize(600,400))
+        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+        self.setWindowIcon(QIcon('windowIcon.ico'))
+        
+        # 错误报告
+        # self.log = logger.read_log()
+        # error_text_box = QTextEdit()
+        # error_text_box.setText(self.log)
+        # error_text_box.setReadOnly(True)
+        
+        # 日志显示框
+        stdout_box.setReadOnly(True)
+
+        # 保存日志按钮
+        save_btn = QPushButton('保存日志',self)
+        save_btn.clicked.connect(self.save_log)
+
+        # 停止运行按钮
+        abort_btn.clicked.connect(self.abort)
+        abort_btn.setEnabled(True)
+
+        # 信息条
+        # self.message = QLabel()
+
+        # 进度条
+        # self.progress_bar = QProgressBar()
+        progress_bar.setRange(0,100)
+        progress_bar.setFixedWidth(300)
+        progress_bar.setHidden(True)
+        # signal.progress_update.connect(self.set)
+        
+
+        # 布局
+        grid = QVBoxLayout()
+        grid.addWidget(stdout_box)
+
+        row_2 = QHBoxLayout()
+        
+        row_2.addWidget(abort_btn)
+        row_2.addWidget(save_btn)
+        row_2.addWidget(message_label)
+        row_2.addStretch(1)
+        row_2.addWidget(progress_bar)
+        grid.addLayout(row_2)
+
+        self.setLayout(grid)
+    
+    # 保存日志
+    def save_log(self):
+        if(global_var.get_value('running_flag')):
+            QMessageBox.about(self,"提示","不要在运行过程中保存日志")
+            return
+        log_path = QFileDialog.getSaveFileName(self, '保存日志到', './log/{}.log'.format(time.strftime("%Y_%m_%d"),"all files(*.*)"))[0]
+        if(log_path!=''):
+            log_content = stdout_box.toPlainText()
+            logger.write_log(log_content,log_path)
+
+    # 中止运行
+    def abort(self):
+        self.abort_confirm()
+
+    # 关闭窗口
+    def closeEvent(self, event):
+        if(self.abort_confirm()):
+            event.accept()
+        else:
+            event.ignore()
+
+    # 中止确认
+    def abort_confirm(self):
+        if(global_var.get_value('running_flag')):
+            reply = QMessageBox.question(self, '警告', '是否终止当前任务？')
+            if(reply == QMessageBox.StandardButton.Yes):
+                global_var.set_value('abort_flag',True)
+                abort_btn.setEnabled(False)
+                message_label.setStyleSheet("color:black;")
+                message_label.setText("任务终止")
+                return True
+            else:
+                return False
+        else:
+            return True
+
 
 
 class MainWidget(QMainWindow):
@@ -132,7 +185,7 @@ class MainWidget(QMainWindow):
 
         # 选择OP类型
         self.type_select = QComboBox()
-        self.type_select.addItems(["混血新版OP",'混血旧版OP'])
+        self.type_select.addItems(["自动识别","混血新版OP","混血旧版OP"])
         self.type_select.setMinimumWidth(90)
         type_select_label = QLabel('OP类型 ')
 
@@ -165,8 +218,8 @@ class MainWidget(QMainWindow):
         self.start_offset = QSpinBox()
         self.start_offset.setValue(0)
         self.start_offset.setSingleStep(1)
-        self.start_offset.setMaximum(999)
-        self.start_offset.setMinimum(-999)
+        self.start_offset.setMaximum(99)
+        self.start_offset.setMinimum(-99)
         self.start_offset.setMinimumWidth(90)
         self.start_offset.setSuffix('帧')
         self.start_offset.setToolTip('在自动识别基础上手动调节OP插入时间\n正值代表向后偏移, 负值代表向前偏移')
@@ -176,8 +229,8 @@ class MainWidget(QMainWindow):
         # OP尾部偏移
         self.end_offset = QSpinBox()
         self.end_offset.setValue(0)
-        self.end_offset.setMaximum(999)
-        self.end_offset.setMinimum(-999)
+        self.end_offset.setMaximum(99)
+        self.end_offset.setMinimum(-99)
         self.end_offset.setSingleStep(1)
         self.end_offset.setMinimumWidth(90)
         self.end_offset.setSuffix('帧')
@@ -186,9 +239,9 @@ class MainWidget(QMainWindow):
         end_offset_label.setToolTip('在自动识别基础上手动调节OP结束时间\n正值代表向后偏移, 负值代表向前偏移')
 
         # 模式
-        self.debug_mod = QCheckBox()
-        self.debug_mod.setText('调试模式')
-        self.debug_mod.setToolTip('勾选后将保留运行过程中的临时文件\n并在运行结束后输出控制台内容')
+        self.auto_close = QCheckBox()
+        self.auto_close.setText('完成后自动关闭')
+        self.auto_close.setChecked(True)
 
         # 运行按钮
         self.run_btn = QPushButton('运行',self)
@@ -238,7 +291,7 @@ class MainWidget(QMainWindow):
         row_4.addWidget(end_offset_label)
         row_4.addWidget(self.end_offset)
         row_4.addStretch(1)
-        row_4.addWidget(self.debug_mod)
+        row_4.addWidget(self.auto_close)
         row_4.addStretch(1)
         grid.addLayout(row_4)
         
@@ -251,15 +304,8 @@ class MainWidget(QMainWindow):
         row_5.addWidget(cancel_btn)
         row_5.addWidget(reset_btn)
         grid.addLayout(row_5)
-
-        grid.addStretch(1)
-
-        row_msg = QHBoxLayout()
-        row_msg.addWidget(self.msg)
-        row_msg.addStretch(1)
-        grid.addLayout(row_msg)
-
-        self.setFixedSize(500, 230)
+    
+        self.setMinimumSize(500,230)
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.center()
 
@@ -269,59 +315,98 @@ class MainWidget(QMainWindow):
         self.setCentralWidget(centralWidget)
         self.show()
 
+    # 运行提示信息
+    def write_message(self,msg,type):
+        message_label.setText(msg)
+        if(type=='success'):
+            message_label.setStyleSheet("color:green;")
+        elif(type=='error'):
+            message_label.setStyleSheet("color:red;")
+        else:
+            message_label.setStyleSheet("color:black;")
+
     # op替换功能入口
     def op_replace(self):
         video_input_path = self.input_lineEdit.text()
         video_output_path = self.output_lineEdit.text()
+        if(not self.preCheck(video_input_path,video_output_path)): return
         op_type = self.type_select.currentText()
         diff_threshold = self.diff_threshold.value()
         pre_threshold = self.diff_threshold.value()
         start_offset = self.start_offset.value()
         end_offset = self.end_offset.value()
-        debug_mod = self.debug_mod.isChecked()
-        global_var.set_value('skip_flag',False)
+        auto_close = self.auto_close.isChecked()
+        filename = os.path.splitext(video_input_path)[0]
+        global_var.set_value('abort_flag',False)
+        global_var.set_value('running_flag',True)
+        stdout_box.setPlainText('')
+        message_label.setStyleSheet("color:black;")
+        message_label.setText('')
 
-        if(self.preCheck(video_input_path,video_output_path)):
-            self.std_out.setStyleSheet("color:black;")
-            self.std_out.setText("正在识别OP…")
-            self.run_btn.setEnabled(False)
+        self.run_btn.setEnabled(False)
+        self.run_window = RunWindow(filename)
+        self.run_window.show()
 
-            try:
-                auto_op_replace(video_input_path, video_output_path, op_type, diff_threshold, pre_threshold, start_offset, end_offset, debug_mod, self.std_out)
-                self.stdout(True,"视频已处理完成!")
-                if(debug_mod):
-                    self.error_window = ErrorWindow('控制台输出')
-                    self.error_window.show()
-            except KeyboardInterrupt:
-                pass
-            except FileExistsError:
-                self.stdout(False,"无法找到视频!")
-            except LocateException:
-                self.stdout(False,"未定位到完整的OP!\n请检查OP类型是否正确, 或降低相似阈值")
-            except ConcatExcption:
-                self.stdout(False,"视频合并失败!")
-                self.error_window = ErrorWindow()
-                self.error_window.show()
-            except Exception as e:
-                self.stdout(False,"未知错误!\n请将错误信息反馈给开发者")
-                logger.error(traceback.format_exc())
-                self.error_window = ErrorWindow()
-                self.error_window.show()
-            finally:
-                logger.archive_log()
-                cv2.destroyAllWindows()
-                self.run_btn.setEnabled(True)
+        try:
+            auto_op_replace(video_input_path,video_output_path, op_type, diff_threshold, pre_threshold, start_offset, end_offset, message_label, progress_bar)
+            progress_bar.setValue(100)
+            self.write_message("已完成!",'success')
+            abort_btn.setEnabled(False)
+            global_var.set_value('running_flag',False)
+            os.startfile(os.path.dirname(video_output_path))
+            if(auto_close):
+                time.sleep(3)
+                self.close_Event()
+                self.run_window.close()
 
+        except KeyboardInterrupt:
+            pass
+        except FileExistsError:
+            self.write_message("无法找到视频!",'error')
+        except LocateException:
+            self.write_message("未定位到完整OP!\n请检查OP类型是否正确或降低相似阈值",'error')
+        except FPSException:
+            self.write_message("视频帧率不符合标准!",'error')
+        except FrameSizeException:
+            self.write_message("视频尺寸不符合标准!",'error')
+        except ConcatException:
+            self.write_message("视频合并失败!",'error')
+        except UserAbortException:
+            logger.stdout("\nWork is aborted by user.")
+        except Exception:
+            self.write_message("未知错误!\n请将日志反馈给开发者",'error')
+            logger.error(traceback.format_exc())
+        finally:
+            global_var.set_value('running_flag',False)
+            cv2.destroyAllWindows()
+            self.run_btn.setEnabled(True)
 
     # 退出按钮
     def close_Event(self):
-        global_var.set_value('skip_flag',True)
-        self.close()
+        if(self.abort_confirm()):
+            self.close()
 
     # 重写关闭按钮
     def closeEvent(self, event) -> None:
-        global_var.set_value('skip_flag',True)
-        self.close()
+        if(self.abort_confirm()):
+            event.accept()
+        else:
+            event.ignore()
+
+    # 中止确认
+    def abort_confirm(self):
+        if(global_var.get_value('running_flag')):
+            reply = QMessageBox.question(self, '警告', '是否终止当前任务？')
+            if(reply == QMessageBox.StandardButton.Yes):
+                global_var.set_value('abort_flag',True)
+                abort_btn.setEnabled(False)
+                message_label.setStyleSheet("color:black;")
+                message_label.setText("任务终止")
+                return True
+            else:
+                return False
+        else:
+            return True
 
     # 设置前缀
     def setPrefix(self):
@@ -339,7 +424,7 @@ class MainWidget(QMainWindow):
     # 设置默认目录
     def setRoot(self):
         home_dir = './'
-        dirpath = QFileDialog.getExistingDirectory(self, 'Open file', home_dir)
+        dirpath = QFileDialog.getExistingDirectory(self, '设置默认目录', home_dir)
 
         if (dirpath):
             self.__default_input_path = dirpath
@@ -357,6 +442,8 @@ class MainWidget(QMainWindow):
         if(filepath != ''):
             self.input_lineEdit.setText(filepath)
             self.output_lineEdit.setText(os.path.dirname(filepath) + '/' + self.__default_prefix + os.path.basename(filepath))
+            self.input_lineEdit.setCursorPosition(0)
+            self.output_lineEdit.setCursorPosition(0)
 
     def select_output_file(self):
         filename, _ = QFileDialog.getSaveFileName(self, "输出至",self.__default_output_path + '',"Video (*.mp4)")
@@ -386,7 +473,7 @@ class MainWidget(QMainWindow):
         self.pre_threshold.setValue(self.__default_pre)
         self.start_offset.setValue(0)
         self.end_offset.setValue(0)
-        self.debug_mod.setChecked(False)
+        self.auto_close.setChecked(False)
         self.std_out.setText('')
 
     # stdout
@@ -423,6 +510,8 @@ class MainWidget(QMainWindow):
     def keyPressEvent(self, event):
         if(event.key() == Qt.Key.Key_K):
             global_var.set_value('skip_flag',True)
+
+
 
 
 if __name__ == '__main__':
